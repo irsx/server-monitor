@@ -44,6 +44,11 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Check installer
+        run: |
+          bash -n scripts/install.sh
+          python3 -m unittest discover -s scripts/tests -v
+
       - name: Build Linux binaries
         env:
           CGO_ENABLED: '0'
@@ -55,9 +60,15 @@ jobs:
               -o "dist/service-health-monitor-linux-$arch" ./cmd/monitor
           done
 
+      - name: Package installer files
+        run: |
+          cp scripts/install.sh dist/install.sh
+          cp .env.example dist/server-monitor.env.example
+          cp deploy/server-monitor.service dist/server-monitor.service
+
       - name: Generate SHA256 checksums
         working-directory: dist
-        run: sha256sum service-health-monitor-linux-* > checksums.txt
+        run: sha256sum service-health-monitor-linux-* install.sh server-monitor.env.example server-monitor.service > checksums.txt
 
       - name: Publish GitHub Release
         env:

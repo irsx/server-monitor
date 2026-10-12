@@ -99,7 +99,72 @@ Setelah perubahan, restart service. Untuk menonaktifkan cukup set `MYSQL_ENABLED
 
 `Seconds_Behind_Source/Master` merupakan indikator keterlambatan replikasi, bukan jaminan bahwa replica memiliki semua transaksi terbaru. Karena itu agent juga memeriksa kedua thread replikasi. Referensi: [MySQL SHOW REPLICA STATUS](https://dev.mysql.com/doc/refman/8.0/en/show-replica-status.html).
 
-## Deployment Linux dengan systemctl
+## Instalasi otomatis dari GitHub Release
+
+Jalankan pada server Linux AMD64/x86_64 atau ARM64/aarch64 yang memakai systemd. Installer memerlukan Bash, `curl`, CA certificates, `sha256sum`/coreutils, `awk`, serta command manajemen user (`useradd`, `groupadd`, `getent`). Go tidak perlu diinstal pada server.
+
+Setelah perubahan installer ini dipush dan **release baru berhasil dibuat**, jalankan:
+
+```bash
+curl -fL --proto '=https' --proto-redir '=https' \
+  https://github.com/irsx/server-monitor/releases/latest/download/install.sh \
+  -o install.sh
+sudo bash install.sh
+```
+
+Installer akan mendeteksi arsitektur, menentukan versi terbaru, mengunduh binary/template/unit dari versi yang sama, memverifikasi SHA256, membuat user `server-monitor`, dan memasang:
+
+| File | Lokasi |
+| --- | --- |
+| Binary | `/opt/server-monitor/bin/service-health-monitor` |
+| Konfigurasi | `/etc/server-monitor/server-monitor.env` |
+| Unit systemd | `/etc/systemd/system/server-monitor.service` |
+
+Pada instalasi pertama di terminal interaktif, masukkan `TELEGRAM_BOT_TOKEN` (input disembunyikan) dan `TELEGRAM_CHAT_ID` ketika diminta. Service otomatis diaktifkan saat boot dan dijalankan. MySQL tetap **OFF** secara default. Periksa hasilnya:
+
+```bash
+sudo systemctl status server-monitor --no-pager
+sudo journalctl -u server-monitor -f
+```
+
+Untuk instalasi tanpa prompt, siapkan file `.env` lengkap lalu berikan ke installer. Untuk memasang versi tertentu, gunakan `--version`:
+
+```bash
+sudo bash install.sh --version v1.1.0 --env-file /path/ke/server-monitor.env
+```
+
+Installer tidak mengeksekusi isi `.env` sebagai shell. Bila konfigurasi tujuan sudah ada, file tersebut dipertahankan dan `--env-file` diabaikan. Tanpa file konfigurasi dan tanpa terminal interaktif, installer membuat template tetapi **belum mengaktifkan atau menjalankan service**; isi kredensial kemudian jalankan:
+
+```bash
+sudoedit /etc/server-monitor/server-monitor.env
+sudo systemctl enable --now server-monitor
+```
+
+Update ke release terbaru atau versi tertentu dengan script yang sama:
+
+```bash
+sudo bash install.sh
+# Atau:
+sudo bash install.sh --version v1.1.0
+```
+
+Update mengganti binary serta unit systemd, mempertahankan konfigurasi, kemudian me-restart service. Perubahan manual pada unit utama akan tertimpa; gunakan `sudo systemctl edit server-monitor` untuk override. Download dan checksum diperiksa sebelum file sistem diubah. Jika restart gagal, periksa journal; installer tidak melakukan rollback otomatis.
+
+Opsi tambahan:
+
+```bash
+# Pasang/update file saja; jangan enable/start/restart (service lama tetap berjalan jika sebelumnya aktif).
+sudo bash install.sh --no-start
+
+# Gunakan release dari fork publik.
+sudo bash install.sh --repo OWNER/REPO --version v1.1.0
+
+bash install.sh --help
+```
+
+Release lama yang belum memuat `server-monitor.env.example` dan `server-monitor.service` belum mendukung installer ini. Terbitkan tag baru dengan workflow terbaru. Unduhan menggunakan [tautan asset GitHub Release](https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases).
+
+## Deployment manual Linux dengan systemctl
 
 Jalankan dari root direktori proyek **pada server Linux target**, menggunakan akun dengan sudo. Build sesuai arsitektur server (jangan menyalin binary macOS ke Linux).
 
@@ -175,11 +240,14 @@ git tag -a v1.0.0 -m "Release v1.0.0"
 git push origin v1.0.0
 ```
 
-Pantau tab **Actions** pada repository. Setelah selesai, halaman **Releases → v1.0.0** akan berisi release notes otomatis dan tiga asset:
+Pantau tab **Actions** pada repository. Setelah selesai, halaman **Releases → v1.0.0** akan berisi release notes otomatis dan asset:
 
 - `service-health-monitor-linux-amd64` untuk server x86_64.
 - `service-health-monitor-linux-arm64` untuk server ARM64/aarch64.
-- `checksums.txt` untuk verifikasi SHA256 kedua binary.
+- `install.sh` untuk download dan pemasangan otomatis.
+- `server-monitor.env.example` sebagai template konfigurasi tanpa kredensial.
+- `server-monitor.service` sebagai unit systemd.
+- `checksums.txt` untuk verifikasi SHA256 seluruh file di atas.
 
 Workflow memakai `GITHUB_TOKEN` bawaan dengan permission `contents: write`; tidak perlu membuat secret tambahan. GitHub Actions harus aktif dan kebijakan repository/organisasi harus mengizinkan permission tersebut. Push branch biasa tidak memicu release. Semua tag `v*`, termasuk tag seperti `v1.0.0-rc1`, menghasilkan release biasa. Gunakan versi baru untuk setiap rilis; rerun workflow pada tag yang sama akan memperbarui asset release yang sudah ada.
 
@@ -196,14 +264,16 @@ sudo systemctl start server-monitor
 sudo systemctl status server-monitor --no-pager
 ```
 
-Untuk instalasi pertama, ikuti bagian deployment systemctl, menggunakan binary release sebagai pengganti langkah build. File `.env` tetap dikonfigurasi pada server dan tidak dimasukkan ke release. Publikasi menggunakan [GitHub CLI release](https://cli.github.com/manual/gh_release_create).
+Untuk instalasi pertama, gunakan installer otomatis atau ikuti bagian deployment manual systemctl. File `.env` berisi kredensial tetap dikonfigurasi pada server; release hanya memuat template kosong. Publikasi menggunakan [GitHub CLI release](https://cli.github.com/manual/gh_release_create).
 
 ## Pengujian
 
 ```bash
 go test -race ./...
 go vet ./...
+bash -n scripts/install.sh
+python3 -m unittest discover -s scripts/tests -v
 ```
 
-Pengujian mencakup validasi konfigurasi, pergantian tanggal laporan, status replikasi lama/baru, threshold, cooldown, pemulihan, retry setelah pengiriman gagal, respons Telegram, dan pembagian pesan Unicode. Test Telegram menggunakan server HTTP lokal sehingga tidak mengirim pesan nyata. Koneksi replica dan bot produksi perlu diverifikasi dengan `-once` pada lingkungan deployment.
+Pengujian mencakup validasi konfigurasi, pergantian tanggal laporan, status replikasi lama/baru, threshold, cooldown, pemulihan, retry setelah pengiriman gagal, respons Telegram, dan pembagian pesan Unicode. Test Telegram menggunakan server HTTP lokal sehingga tidak mengirim pesan nyata. Test installer memakai direktori sementara dan simulasi download/systemd untuk memeriksa instalasi, update tanpa menimpa konfigurasi, pemilihan arsitektur, dan kegagalan checksum/download/service. Koneksi replica dan bot produksi perlu diverifikasi dengan `-once` pada lingkungan deployment.
 # server-monitor

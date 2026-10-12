@@ -164,6 +164,40 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/service-health-m
 
 Salin binary yang sesuai ke server dan gunakan sebagai sumber pada perintah `sudo install` di atas. Server target memerlukan CA certificates sistem untuk HTTPS Telegram dan TLS MySQL.
 
+## Build dan release otomatis dengan GitHub Actions
+
+Workflow [release.yml](.github/workflows/release.yml) berjalan setiap kali tag dengan awalan `v` dipush, misalnya `v1.0.0`. Workflow memverifikasi dependency, menjalankan `go test -race` dan `go vet`, lalu membangun binary Linux dengan CGO dinonaktifkan. Release hanya dibuat jika semua pemeriksaan dan build berhasil.
+
+Commit dan push source beserta workflow terlebih dahulu, kemudian buat tag pada commit yang ingin dirilis:
+
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+Pantau tab **Actions** pada repository. Setelah selesai, halaman **Releases → v1.0.0** akan berisi release notes otomatis dan tiga asset:
+
+- `service-health-monitor-linux-amd64` untuk server x86_64.
+- `service-health-monitor-linux-arm64` untuk server ARM64/aarch64.
+- `checksums.txt` untuk verifikasi SHA256 kedua binary.
+
+Workflow memakai `GITHUB_TOKEN` bawaan dengan permission `contents: write`; tidak perlu membuat secret tambahan. GitHub Actions harus aktif dan kebijakan repository/organisasi harus mengizinkan permission tersebut. Push branch biasa tidak memicu release. Semua tag `v*`, termasuk tag seperti `v1.0.0-rc1`, menghasilkan release biasa. Gunakan versi baru untuk setiap rilis; rerun workflow pada tag yang sama akan memperbarui asset release yang sudah ada.
+
+Unduh binary sesuai arsitektur server dan `checksums.txt` dari release yang sama. Verifikasi lalu pasang sebagai binary service:
+
+```bash
+# Jalankan di direktori hasil unduhan; --ignore-missing melewati arsitektur yang tidak diunduh.
+sha256sum --check --ignore-missing checksums.txt
+
+# Contoh update server x86_64; ganti amd64 menjadi arm64 bila diperlukan.
+sudo systemctl stop server-monitor
+sudo install -m 755 service-health-monitor-linux-amd64 /opt/server-monitor/bin/service-health-monitor
+sudo systemctl start server-monitor
+sudo systemctl status server-monitor --no-pager
+```
+
+Untuk instalasi pertama, ikuti bagian deployment systemctl, menggunakan binary release sebagai pengganti langkah build. File `.env` tetap dikonfigurasi pada server dan tidak dimasukkan ke release. Publikasi menggunakan [GitHub CLI release](https://cli.github.com/manual/gh_release_create).
+
 ## Pengujian
 
 ```bash
